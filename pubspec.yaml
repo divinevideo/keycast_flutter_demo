@@ -1,0 +1,50 @@
+name: keycast_flutter_demo
+description: "Keycast Flutter Demo - OAuth + PKCE + BYOK authentication demo for Nostr"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.0
+
+workspace:
+  - packages/keycast_flutter
+  - packages/nostr_sdk
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  flutter_riverpod: ^3.0.0
+  riverpod_annotation: ^3.0.0
+
+  # Networking
+  http: ^1.5.0
+  url_launcher: ^6.3.2
+  app_links: ^6.4.1
+
+  # Crypto
+  crypto: ^3.0.7
+
+  # UI
+  google_fonts: ^6.3.2
+
+  # Local packages
+  nostr_sdk:
+    path: packages/nostr_sdk
+  keycast_flutter:
+    path: packages/keycast_flutter
+  flutter_web_auth_2: ^4.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.4.15
+  riverpod_generator: ^3.0.0
+  mocktail: ^1.0.3
+
+flutter:
+  uses-material-design: true

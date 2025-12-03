@@ -1,0 +1,19 @@
+name: nostr_sdk
+description: "Minimal Nostr SDK with NostrSigner interface, Event model, and key utilities"
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.10.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.7
+  bech32: ^0.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
