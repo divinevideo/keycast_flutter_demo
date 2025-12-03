@@ -176,7 +176,20 @@ Add to `ios/Runner/Runner.entitlements`:
 
 Add `CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;` to your Xcode project's build settings (Debug, Release, and Profile configurations).
 
-### Step 5: Android Configuration (App Links)
+### Step 5: macOS Configuration (Universal Links)
+
+macOS also requires Associated Domains for HTTPS callbacks. Add to both `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`:
+```xml
+<key>com.apple.developer.associated-domains</key>
+<array>
+    <string>applinks:login.divine.video</string>
+    <string>webcredentials:login.divine.video</string>
+</array>
+```
+
+**Note:** macOS Universal Links require macOS 14.4+ and the same AASA file configuration as iOS. The app must be signed with an Apple Developer certificate that matches the AASA file's app IDs.
+
+### Step 6: Android Configuration (App Links)
 
 Add to `android/app/src/main/AndroidManifest.xml` inside `<activity>`:
 ```xml
