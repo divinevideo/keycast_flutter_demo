@@ -4,6 +4,33 @@ A reference implementation demonstrating how to integrate [Keycast](https://logi
 
 **Purpose:** Working code as documentation for integrating Keycast into `divine-mobile`.
 
+## Signing Modes
+
+After authentication, `KeycastSession` provides two ways to sign Nostr events:
+
+### 1. RPC Mode (Recommended)
+
+Direct HTTPS calls to Keycast's RPC API. This demo uses RPC for better latency and scalability.
+
+```dart
+final rpc = KeycastRpc.fromSession(config, session);
+final signedEvent = await rpc.signEvent(event);
+```
+
+### 2. NIP-46 Bunker Mode
+
+The session also provides a `bunkerUrl` for NIP-46 remote signing over Nostr relays. Use this if you already have a NIP-46 client implementation (like NDK or a custom `NostrRemoteSigner`).
+
+```dart
+final bunkerUrl = session.bunkerUrl;
+// bunker://<pubkey>?relay=wss://...&secret=...
+
+// Use with your NIP-46 client:
+final signer = NostrRemoteSigner.fromBunkerUrl(bunkerUrl);
+```
+
+Both modes support the same operations: `sign_event`, `get_public_key`, `nip44_encrypt`, `nip44_decrypt`, `nip04_encrypt`, `nip04_decrypt`.
+
 ## Quick Start
 
 ```bash
