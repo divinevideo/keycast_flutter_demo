@@ -401,6 +401,23 @@ All HTTP calls are mocked using `mocktail` - no network required.
 
 ## Troubleshooting
 
+### "User canceled login" / OAuth immediately fails
+
+This error occurs when ASWebAuthenticationSession can't match the callback URL. The most common cause:
+
+**Universal Links require Apple Developer Team membership.** The demo's AASA file at `login.divine.video` is configured for our Team ID (`GZCZBKH7MY`). If you build with a different Team ID, Universal Links won't work.
+
+**Solutions for third-party developers:**
+
+1. **Read the code as reference** - The demo is primarily documentation. Study how OAuth + PKCE + Universal Links work, then implement in your own app with your own AASA configuration.
+
+2. **Use macOS** - macOS builds don't require the same Universal Links verification:
+   ```bash
+   flutter run -d macos
+   ```
+
+3. **Contact us** - If you're integrating with Keycast and need your app's bundle ID added to the AASA, reach out.
+
 ### Universal Links not working in simulator
 
 1. Delete and reinstall the app
