@@ -24,6 +24,7 @@ class KeycastOAuth {
     String? nsec,
     String scope = 'policy:social',
     bool defaultRegister = true,
+    String? authorizationHandle,
   }) {
     String? byokPubkey;
     if (nsec != null) {
@@ -47,6 +48,10 @@ class KeycastOAuth {
 
     if (byokPubkey != null) {
       params['byok_pubkey'] = byokPubkey;
+    }
+
+    if (authorizationHandle != null) {
+      params['authorization_handle'] = authorizationHandle;
     }
 
     final uri = Uri.parse(config.authorizeUrl).replace(queryParameters: params);

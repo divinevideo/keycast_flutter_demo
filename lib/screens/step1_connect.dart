@@ -31,7 +31,11 @@ class _Step1ConnectState extends ConsumerState<Step1Connect> {
 
   Future<void> _connectWithKeycast({String? nsec}) async {
     final oauth = ref.read(oauthClientProvider);
-    final (url, verifier) = oauth.getAuthorizationUrl(nsec: nsec);
+    final existingSession = ref.read(sessionProvider);
+    final (url, verifier) = oauth.getAuthorizationUrl(
+      nsec: nsec,
+      authorizationHandle: existingSession?.authorizationHandle,
+    );
 
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(

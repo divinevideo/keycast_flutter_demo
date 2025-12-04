@@ -13,6 +13,8 @@ class KeycastSession {
   final DateTime? expiresAt;
   final String? scope;
   final String? userPubkey;
+  /// Handle for silent re-authentication
+  final String? authorizationHandle;
 
   const KeycastSession({
     required this.bunkerUrl,
@@ -20,6 +22,7 @@ class KeycastSession {
     this.expiresAt,
     this.scope,
     this.userPubkey,
+    this.authorizationHandle,
   });
 
   factory KeycastSession.fromTokenResponse(TokenResponse response) {
@@ -30,6 +33,7 @@ class KeycastSession {
           ? DateTime.now().add(Duration(seconds: response.expiresIn))
           : null,
       scope: response.scope,
+      authorizationHandle: response.authorizationHandle,
     );
   }
 
@@ -44,6 +48,7 @@ class KeycastSession {
     DateTime? expiresAt,
     String? scope,
     String? userPubkey,
+    String? authorizationHandle,
   }) {
     return KeycastSession(
       bunkerUrl: bunkerUrl ?? this.bunkerUrl,
@@ -51,6 +56,7 @@ class KeycastSession {
       expiresAt: expiresAt ?? this.expiresAt,
       scope: scope ?? this.scope,
       userPubkey: userPubkey ?? this.userPubkey,
+      authorizationHandle: authorizationHandle ?? this.authorizationHandle,
     );
   }
 
@@ -61,6 +67,7 @@ class KeycastSession {
       'expires_at': expiresAt?.toIso8601String(),
       'scope': scope,
       'user_pubkey': userPubkey,
+      'authorization_handle': authorizationHandle,
     };
   }
 
@@ -73,6 +80,7 @@ class KeycastSession {
           : null,
       scope: json['scope'] as String?,
       userPubkey: json['user_pubkey'] as String?,
+      authorizationHandle: json['authorization_handle'] as String?,
     );
   }
 

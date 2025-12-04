@@ -8,6 +8,8 @@ class TokenResponse {
   final int expiresIn;
   final String? scope;
   final PolicyInfo? policy;
+  /// Handle for silent re-authentication (pass to next authorize request)
+  final String? authorizationHandle;
 
   const TokenResponse({
     required this.bunkerUrl,
@@ -16,6 +18,7 @@ class TokenResponse {
     this.expiresIn = 0,
     this.scope,
     this.policy,
+    this.authorizationHandle,
   });
 
   factory TokenResponse.fromJson(Map<String, dynamic> json) {
@@ -28,6 +31,7 @@ class TokenResponse {
       policy: json['policy'] != null
           ? PolicyInfo.fromJson(json['policy'] as Map<String, dynamic>)
           : null,
+      authorizationHandle: json['authorization_handle'] as String?,
     );
   }
 }
