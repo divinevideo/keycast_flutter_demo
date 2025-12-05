@@ -16,7 +16,7 @@ import '../storage/keycast_storage.dart';
 /// Storage key for session credentials
 const _storageKeySession = 'keycast_session';
 
-/// Storage key for authorization handle (survives logout for silent re-auth)
+/// Storage key for authorization handle (for silent re-auth when session expires)
 const _storageKeyHandle = 'keycast_auth_handle';
 
 class KeycastOAuth {
@@ -49,23 +49,19 @@ class KeycastOAuth {
     }
   }
 
-  /// Get stored authorization handle (survives logout)
+  /// Get stored authorization handle (for silent re-auth when session expires)
   Future<String?> getAuthorizationHandle() async {
     return _storage.read(_storageKeyHandle);
   }
 
-  /// Clear session but preserve authorization handle for silent re-auth
+  /// Clear all session data including authorization handle
+  /// Use this when user explicitly logs out - clears everything for security
   Future<void> logout() async {
     await _storage.delete(_storageKeySession);
+    await _storage.delete(_storageKeyHandle);
     await _client.post(
       Uri.parse('${config.serverUrl}/api/auth/logout'),
     );
-  }
-
-  /// Clear all stored data including authorization handle
-  Future<void> clearAll() async {
-    await _storage.delete(_storageKeySession);
-    await _storage.delete(_storageKeyHandle);
   }
 
   Future<void> _saveSession(KeycastSession session) async {
