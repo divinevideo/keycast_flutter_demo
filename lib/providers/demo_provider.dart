@@ -1,6 +1,7 @@
 // ABOUTME: Riverpod state management for Keycast demo app
 // ABOUTME: Manages OAuth flow state, session, RPC client, and signing mode
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keycast_flutter/keycast_flutter.dart';
 import 'package:nostr_sdk/nostr_sdk.dart';
@@ -78,7 +79,17 @@ class SessionNotifier extends Notifier<KeycastSession?> {
   }
 
   Future<void> _loadSession() async {
-    state = await KeycastSession.load();
+    final session = await KeycastSession.load();
+    if (session != null) {
+      if (session.isExpired) {
+        debugPrint('[Keycast] Session expired, clearing');
+        await KeycastSession.clear();
+        state = null;
+        return;
+      }
+      debugPrint('[Keycast] Loaded valid session from storage');
+    }
+    state = session;
   }
 
   Future<void> setSession(KeycastSession session) async {

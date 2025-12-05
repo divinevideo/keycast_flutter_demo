@@ -4,8 +4,8 @@
 <dict>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>applinks:login.divine.video</string>
-		<string>webcredentials:login.divine.video</string>
+		<string>applinks:login.divine.video?mode=developer</string>
+		<string>webcredentials:login.divine.video?mode=developer</string>
 	</array>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>

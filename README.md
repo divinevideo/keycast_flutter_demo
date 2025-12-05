@@ -34,10 +34,10 @@ Both modes support the same operations: `sign_event`, `get_public_key`, `nip44_e
 ## Quick Start
 
 ```bash
-# Run on iOS simulator
+# Run on iOS simulator (recommended - OAuth works correctly)
 flutter run -d "iPhone 15 Pro"
 
-# Run on macOS (for development)
+# Run on macOS (OAuth has known issues - see Troubleshooting)
 flutter run -d macos
 ```
 
@@ -178,7 +178,9 @@ Add `CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;` to your Xcode project
 
 ### Step 5: macOS Configuration (Universal Links)
 
-macOS also requires Associated Domains for HTTPS callbacks. Add to both `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`:
+> **Warning:** macOS HTTPS callbacks with ASWebAuthenticationSession do not work reliably due to Apple platform differences. The completion handler often doesn't fire on macOS, even though the same API works on iOS. See [Troubleshooting](#user-canceled-login--oauth-immediately-fails) for details.
+
+macOS requires Associated Domains for HTTPS callbacks. Add to both `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`:
 ```xml
 <key>com.apple.developer.associated-domains</key>
 <array>
@@ -416,20 +418,23 @@ All HTTP calls are mocked using `mocktail` - no network required.
 
 ### "User canceled login" / OAuth immediately fails
 
-This error occurs when ASWebAuthenticationSession can't match the callback URL. The most common cause:
+This error occurs when ASWebAuthenticationSession can't match the callback URL. Common causes:
 
-**Universal Links require Apple Developer Team membership.** The demo's AASA file at `login.divine.video` is configured for our Team ID (`GZCZBKH7MY`). If you build with a different Team ID, Universal Links won't work.
+**1. Universal Links require Apple Developer Team membership.** The demo's AASA file at `login.divine.video` is configured for our Team ID (`GZCZBKH7MY`). If you build with a different Team ID, Universal Links won't work.
 
-**Solutions for third-party developers:**
+**2. macOS HTTPS callbacks don't work reliably.** Due to Apple platform differences, `ASWebAuthenticationSession.Callback.https` behaves differently on macOS vs iOS:
+- **iOS 17.4+**: HTTPS callbacks work correctly - the completion handler fires
+- **macOS 14.4+**: The completion handler often doesn't fire. The redirect goes to the Universal Links handler instead, causing the "User canceled login" error
 
-1. **Read the code as reference** - The demo is primarily documentation. Study how OAuth + PKCE + Universal Links work, then implement in your own app with your own AASA configuration.
+This is a [known Apple platform behavior](https://stackoverflow.com/questions/61748589/does-aswebauthenticationsession-support-universal-links) that cannot be fixed through configuration. The flutter_web_auth_2 plugin would need platform-specific code to handle this.
 
-2. **Use macOS** - macOS builds don't require the same Universal Links verification:
-   ```bash
-   flutter run -d macos
-   ```
+**Solutions:**
 
-3. **Contact us** - If you're integrating with Keycast and need your app's bundle ID added to the AASA, reach out.
+1. **Use iOS for testing** - iOS (simulator and device) works correctly with HTTPS callbacks
+
+2. **Read the code as reference** - The demo is primarily documentation. Study how OAuth + PKCE + Universal Links work, then implement in your own app
+
+3. **Contact us** - If you're integrating with Keycast and need your app's bundle ID added to the AASA, reach out
 
 ### Universal Links not working in simulator
 
