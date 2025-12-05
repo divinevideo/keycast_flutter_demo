@@ -31,10 +31,8 @@ class _Step1ConnectState extends ConsumerState<Step1Connect> {
 
   Future<void> _connectWithKeycast({String? nsec}) async {
     final oauth = ref.read(oauthClientProvider);
-    final existingSession = ref.read(sessionProvider);
-    final (url, verifier) = oauth.getAuthorizationUrl(
+    final (url, verifier) = await oauth.getAuthorizationUrl(
       nsec: nsec,
-      authorizationHandle: existingSession?.authorizationHandle,
     );
 
     if (url.isEmpty) {

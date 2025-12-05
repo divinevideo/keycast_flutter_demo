@@ -18,9 +18,9 @@ void main() {
 
   group('KeycastOAuth', () {
     group('getAuthorizationUrl', () {
-      test('generates URL with required parameters', () {
+      test('generates URL with required parameters', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, verifier) = oauth.getAuthorizationUrl();
+        final (url, verifier) = await oauth.getAuthorizationUrl();
 
         final uri = Uri.parse(url);
         expect(uri.host, 'login.divine.video');
@@ -32,49 +32,49 @@ void main() {
         expect(verifier, isNotEmpty);
       });
 
-      test('includes default scope', () {
+      test('includes default scope', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, _) = oauth.getAuthorizationUrl();
+        final (url, _) = await oauth.getAuthorizationUrl();
 
         final uri = Uri.parse(url);
         expect(uri.queryParameters['scope'], 'policy:social');
       });
 
-      test('accepts custom scope', () {
+      test('accepts custom scope', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, _) = oauth.getAuthorizationUrl(scope: 'custom:scope');
+        final (url, _) = await oauth.getAuthorizationUrl(scope: 'custom:scope');
 
         final uri = Uri.parse(url);
         expect(uri.queryParameters['scope'], 'custom:scope');
       });
 
-      test('includes default_register=true by default', () {
+      test('includes default_register=true by default', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, _) = oauth.getAuthorizationUrl();
+        final (url, _) = await oauth.getAuthorizationUrl();
 
         final uri = Uri.parse(url);
         expect(uri.queryParameters['default_register'], 'true');
       });
 
-      test('respects defaultRegister=false', () {
+      test('respects defaultRegister=false', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, _) = oauth.getAuthorizationUrl(defaultRegister: false);
+        final (url, _) = await oauth.getAuthorizationUrl(defaultRegister: false);
 
         final uri = Uri.parse(url);
         expect(uri.queryParameters['default_register'], 'false');
       });
 
-      test('omits byok_pubkey when nsec not provided', () {
+      test('omits byok_pubkey when nsec not provided', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, _) = oauth.getAuthorizationUrl();
+        final (url, _) = await oauth.getAuthorizationUrl();
 
         final uri = Uri.parse(url);
         expect(uri.queryParameters.containsKey('byok_pubkey'), isFalse);
       });
 
-      test('includes byok_pubkey when nsec provided', () {
+      test('includes byok_pubkey when nsec provided', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, verifier) = oauth.getAuthorizationUrl(
+        final (url, verifier) = await oauth.getAuthorizationUrl(
           nsec:
               'nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5',
         );
@@ -85,9 +85,9 @@ void main() {
         expect(verifier, contains('.nsec1'));
       });
 
-      test('returns null URL for invalid nsec', () {
+      test('returns null URL for invalid nsec', () async {
         final oauth = KeycastOAuth(config: config);
-        final (url, _) = oauth.getAuthorizationUrl(nsec: 'invalid');
+        final (url, _) = await oauth.getAuthorizationUrl(nsec: 'invalid');
         expect(url, isEmpty);
       });
     });

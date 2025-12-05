@@ -61,7 +61,10 @@ final oauthConfigProvider = Provider<OAuthConfig>((ref) {
 
 final oauthClientProvider = Provider<KeycastOAuth>((ref) {
   final config = ref.watch(oauthConfigProvider);
-  return KeycastOAuth(config: config);
+  return KeycastOAuth(
+    config: config,
+    storage: SecureKeycastStorage(),
+  );
 });
 
 final sessionProvider =

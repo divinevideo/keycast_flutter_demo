@@ -17,3 +17,6 @@ export 'src/models/keycast_session.dart';
 export 'src/models/exceptions.dart';
 
 export 'src/crypto/key_utils.dart';
+
+export 'src/storage/keycast_storage.dart';
+export 'src/storage/secure_storage.dart';

@@ -10,22 +10,79 @@ import 'token_response.dart';
 import 'pkce.dart';
 import '../crypto/key_utils.dart';
 import '../models/exceptions.dart';
+import '../models/keycast_session.dart';
+import '../storage/keycast_storage.dart';
+
+/// Storage key for session credentials
+const _storageKeySession = 'keycast_session';
+
+/// Storage key for authorization handle (survives logout for silent re-auth)
+const _storageKeyHandle = 'keycast_auth_handle';
 
 class KeycastOAuth {
   final OAuthConfig config;
   final http.Client _client;
+  final KeycastStorage _storage;
 
   KeycastOAuth({
     required this.config,
     http.Client? httpClient,
-  }) : _client = httpClient ?? http.Client();
+    KeycastStorage? storage,
+  })  : _client = httpClient ?? http.Client(),
+        _storage = storage ?? MemoryKeycastStorage();
 
-  (String url, String verifier) getAuthorizationUrl({
+  /// Get stored session from storage
+  /// Returns null if no session or session is expired
+  Future<KeycastSession?> getSession() async {
+    final json = await _storage.read(_storageKeySession);
+    if (json == null) return null;
+
+    try {
+      final data = jsonDecode(json) as Map<String, dynamic>;
+      final session = KeycastSession.fromJson(data);
+      if (session.isExpired) {
+        return null;
+      }
+      return session;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Get stored authorization handle (survives logout)
+  Future<String?> getAuthorizationHandle() async {
+    return _storage.read(_storageKeyHandle);
+  }
+
+  /// Clear session but preserve authorization handle for silent re-auth
+  Future<void> logout() async {
+    await _storage.delete(_storageKeySession);
+    await _client.post(
+      Uri.parse('${config.serverUrl}/api/auth/logout'),
+    );
+  }
+
+  /// Clear all stored data including authorization handle
+  Future<void> clearAll() async {
+    await _storage.delete(_storageKeySession);
+    await _storage.delete(_storageKeyHandle);
+  }
+
+  Future<void> _saveSession(KeycastSession session) async {
+    await _storage.write(_storageKeySession, jsonEncode(session.toJson()));
+    if (session.authorizationHandle != null) {
+      await _storage.write(_storageKeyHandle, session.authorizationHandle!);
+    }
+  }
+
+  /// Generate authorization URL for OAuth flow
+  /// Automatically uses stored authorization handle for silent re-auth if available
+  Future<(String url, String verifier)> getAuthorizationUrl({
     String? nsec,
     String scope = 'policy:social',
     bool defaultRegister = true,
     String? authorizationHandle,
-  }) {
+  }) async {
     String? byokPubkey;
     if (nsec != null) {
       byokPubkey = KeyUtils.derivePublicKeyFromNsec(nsec);
@@ -50,8 +107,10 @@ class KeycastOAuth {
       params['byok_pubkey'] = byokPubkey;
     }
 
-    if (authorizationHandle != null) {
-      params['authorization_handle'] = authorizationHandle;
+    // Use provided handle, or auto-load from storage for silent re-authentication
+    final handle = authorizationHandle ?? await getAuthorizationHandle();
+    if (handle != null) {
+      params['authorization_handle'] = handle;
     }
 
     final uri = Uri.parse(config.authorizeUrl).replace(queryParameters: params);
@@ -79,6 +138,8 @@ class KeycastOAuth {
     );
   }
 
+  /// Exchange authorization code for tokens
+  /// Automatically saves session to storage after successful exchange
   Future<TokenResponse> exchangeCode({
     required String code,
     required String verifier,
@@ -106,13 +167,13 @@ class KeycastOAuth {
       );
     }
 
-    return TokenResponse.fromJson(json);
-  }
+    final tokenResponse = TokenResponse.fromJson(json);
 
-  Future<void> disconnect() async {
-    await _client.post(
-      Uri.parse('${config.serverUrl}/api/auth/logout'),
-    );
+    // Auto-save session and authorization handle to storage
+    final session = KeycastSession.fromTokenResponse(tokenResponse);
+    await _saveSession(session);
+
+    return tokenResponse;
   }
 
   void close() {
