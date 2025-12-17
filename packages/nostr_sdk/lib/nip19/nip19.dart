@@ -1,80 +1,119 @@
-// ABOUTME: NIP-19 bech32 encoding/decoding for Nostr identifiers
-// ABOUTME: Handles npub, nsec, note encodings between hex and bech32 formats
+import 'dart:developer';
 
 import 'package:bech32/bech32.dart';
-import 'dart:typed_data';
+import 'package:hex/hex.dart';
 
 import 'hrps.dart';
 
 class Nip19 {
-  static const String _hexChars = '0123456789abcdef';
+  // static String encodePubKey(String pubkey) {
+  //   var data = hex.decode(pubkey);
+  //   data = Bech32.convertBits(data, 8, 5, true);
+  //   return Bech32.encode(Hrps.publicKey, data);
+  // }
+
+  static Map<String, int>? charMap;
+
+  // sometimes bech32 is mix with some other chat at the end
+  static int? checkBech32End(String text) {
+    if (charMap == null) {
+      charMap = <String, int>{};
+      for (var chat in charset) {
+        charMap![chat] = 1;
+      }
+    }
+
+    var startIndex = text.indexOf("1");
+    var length = text.length;
+    for (var i = startIndex + 1; i < length; i++) {
+      var char = text.substring(i, i + 1);
+      if (charMap![char] == null) {
+        return i;
+      }
+    }
+
+    return null;
+  }
 
   static bool isKey(String hrp, String str) {
-    return str.startsWith(hrp);
+    if (str.indexOf(hrp) == 0) {
+      return true;
+    } else {
+      return false;
+    }
   }
 
   static bool isPubkey(String str) {
-    return isKey(Hrps.PUBLIC_KEY, str);
-  }
-
-  static bool isPrivateKey(String str) {
-    return isKey(Hrps.PRIVATE_KEY, str);
-  }
-
-  static bool isNoteId(String str) {
-    return isKey(Hrps.NOTE_ID, str);
+    return isKey(Hrps.publicKey, str);
   }
 
   static String encodePubKey(String pubkey) {
-    return _encodeKey(Hrps.PUBLIC_KEY, pubkey);
+    // var data = HEX.decode(pubkey);
+    // data = _convertBits(data, 8, 5, true);
+
+    // var encoder = Bech32Encoder();
+    // Bech32 input = Bech32(Hrps.publicKey, data);
+    // return encoder.convert(input);
+    return _encodeKey(Hrps.publicKey, pubkey);
   }
 
-  static String encodePrivateKey(String privateKey) {
-    return _encodeKey(Hrps.PRIVATE_KEY, privateKey);
+  static String encodeSimplePubKey(String pubkey) {
+    try {
+      var code = encodePubKey(pubkey);
+      var length = code.length;
+      return "${code.substring(0, 6)}:${code.substring(length - 6)}";
+    } catch (e) {
+      if (pubkey.length > 12) {
+        return pubkey.substring(0, 13);
+      } else {
+        return pubkey;
+      }
+    }
   }
 
-  static String encodeNoteId(String id) {
-    return _encodeKey(Hrps.NOTE_ID, id);
-  }
-
-  static String decode(String bech32String) {
+  // static String decode(String npub) {
+  //   var res = Bech32.decode(npub);
+  //   var data = Bech32.convertBits(res.words, 5, 8, false);
+  //   return hex.encode(data).substring(0, 64);
+  // }
+  static String decode(String npub) {
     try {
       var decoder = Bech32Decoder();
-      var bech32Result = decoder.convert(bech32String);
-      var data = _convertBits(bech32Result.data, 5, 8, false);
-      return _bytesToHex(Uint8List.fromList(data));
+      var bech32Result = decoder.convert(npub);
+      var data = convertBits(bech32Result.data, 5, 8, false);
+      return HEX.encode(data);
     } catch (e) {
+      log("Nip19 decode error ${e.toString()}");
       return "";
     }
   }
 
   static String _encodeKey(String hrp, String key) {
-    var data = _hexToBytes(key);
-    var converted = _convertBits(data.toList(), 8, 5, true);
+    var data = HEX.decode(key);
+    data = convertBits(data, 8, 5, true);
 
     var encoder = Bech32Encoder();
-    Bech32 input = Bech32(hrp, converted);
+    Bech32 input = Bech32(hrp, data);
     return encoder.convert(input);
   }
 
-  static Uint8List _hexToBytes(String hex) {
-    final result = Uint8List(hex.length ~/ 2);
-    for (var i = 0; i < result.length; i++) {
-      result[i] = int.parse(hex.substring(i * 2, i * 2 + 2), radix: 16);
-    }
-    return result;
+  static bool isPrivateKey(String str) {
+    return isKey(Hrps.privateKey, str);
   }
 
-  static String _bytesToHex(Uint8List bytes) {
-    final buffer = StringBuffer();
-    for (var byte in bytes) {
-      buffer.write(_hexChars[(byte >> 4) & 0x0F]);
-      buffer.write(_hexChars[byte & 0x0F]);
-    }
-    return buffer.toString();
+  static String encodePrivateKey(String privateKey) {
+    return _encodeKey(Hrps.privateKey, privateKey);
   }
 
-  static List<int> _convertBits(List<int> data, int from, int to, bool pad) {
+  static bool isNoteId(String str) {
+    return isKey(Hrps.noteId, str);
+  }
+
+  static String encodeNoteId(String id) {
+    return _encodeKey(Hrps.noteId, id);
+  }
+
+  static List<int> convertBits(List<int> data, int from, int to, bool pad) {
     var acc = 0;
     var bits = 0;
     var result = <int>[];
@@ -82,7 +121,7 @@ class Nip19 {
 
     for (var v in data) {
       if (v < 0 || (v >> from) != 0) {
-        throw Exception('Invalid value');
+        throw Exception();
       }
       acc = (acc << from) | v;
       bits += from;
