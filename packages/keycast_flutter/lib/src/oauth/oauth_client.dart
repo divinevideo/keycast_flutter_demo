@@ -20,7 +20,7 @@ const _storageKeySession = 'keycast_session';
 /// Storage key for authorization handle (for silent re-auth when session expires)
 const _storageKeyHandle = 'keycast_auth_handle';
 
-/// Storage key for OAuth state (for CSRF protection and multi-device verification polling)
+/// Storage key for OAuth state (for CSRF protection)
 const _storageKeyState = 'keycast_state';
 
 class KeycastOAuth {
@@ -77,7 +77,6 @@ class KeycastOAuth {
   }
 
   /// Generate a cryptographically secure state parameter for CSRF protection
-  /// State is also used by server for multi-device email verification polling
   String _generateState() {
     final random = Random.secure();
     final values = List<int>.generate(32, (_) => random.nextInt(256));
@@ -103,7 +102,7 @@ class KeycastOAuth {
     final verifier = Pkce.generateVerifier(nsec: nsec);
     final challenge = Pkce.generateChallenge(verifier);
 
-    // Generate state for CSRF protection and multi-device verification polling
+    // Generate state for CSRF protection
     final state = _generateState();
     await _storage.write(_storageKeyState, state);
 
