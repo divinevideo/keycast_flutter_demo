@@ -2,6 +2,7 @@
 // ABOUTME: Handles authorization URL generation, callback parsing, and token exchange
 
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'oauth_config.dart';
@@ -18,6 +19,9 @@ const _storageKeySession = 'keycast_session';
 
 /// Storage key for authorization handle (for silent re-auth when session expires)
 const _storageKeyHandle = 'keycast_auth_handle';
+
+/// Storage key for OAuth state (for CSRF protection and multi-device verification polling)
+const _storageKeyState = 'keycast_state';
 
 class KeycastOAuth {
   final OAuthConfig config;
@@ -54,11 +58,12 @@ class KeycastOAuth {
     return _storage.read(_storageKeyHandle);
   }
 
-  /// Clear all session data including authorization handle
+  /// Clear all session data including authorization handle and state
   /// Use this when user explicitly logs out - clears everything for security
   Future<void> logout() async {
     await _storage.delete(_storageKeySession);
     await _storage.delete(_storageKeyHandle);
+    await _storage.delete(_storageKeyState);
     await _client.post(
       Uri.parse('${config.serverUrl}/api/auth/logout'),
     );
@@ -69,6 +74,14 @@ class KeycastOAuth {
     if (session.authorizationHandle != null) {
       await _storage.write(_storageKeyHandle, session.authorizationHandle!);
     }
+  }
+
+  /// Generate a cryptographically secure state parameter for CSRF protection
+  /// State is also used by server for multi-device email verification polling
+  String _generateState() {
+    final random = Random.secure();
+    final values = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64Url.encode(values).replaceAll('=', '');
   }
 
   /// Generate authorization URL for OAuth flow
@@ -90,6 +103,10 @@ class KeycastOAuth {
     final verifier = Pkce.generateVerifier(nsec: nsec);
     final challenge = Pkce.generateChallenge(verifier);
 
+    // Generate state for CSRF protection and multi-device verification polling
+    final state = _generateState();
+    await _storage.write(_storageKeyState, state);
+
     final params = <String, String>{
       'client_id': config.clientId,
       'redirect_uri': config.redirectUri,
@@ -97,6 +114,7 @@ class KeycastOAuth {
       'code_challenge': challenge,
       'code_challenge_method': 'S256',
       'default_register': defaultRegister.toString(),
+      'state': state,
     };
 
     if (byokPubkey != null) {
@@ -113,11 +131,15 @@ class KeycastOAuth {
     return (uri.toString(), verifier);
   }
 
-  CallbackResult parseCallback(String url) {
+  /// Parse callback URL and validate state parameter for CSRF protection
+  /// If state validation fails, returns CallbackError
+  Future<CallbackResult> parseCallback(String url) async {
     final uri = Uri.parse(url);
     final params = uri.queryParameters;
 
     if (params.containsKey('error')) {
+      // Clear stored state on error
+      await _storage.delete(_storageKeyState);
       return CallbackError(
         error: params['error']!,
         description: params['error_description'],
@@ -125,6 +147,20 @@ class KeycastOAuth {
     }
 
     if (params.containsKey('code')) {
+      // Validate state parameter for CSRF protection
+      final returnedState = params['state'];
+      final storedState = await _storage.read(_storageKeyState);
+
+      // Clear stored state after reading (one-time use)
+      await _storage.delete(_storageKeyState);
+
+      if (storedState != null && returnedState != storedState) {
+        return CallbackError(
+          error: 'state_mismatch',
+          description: 'OAuth state parameter mismatch - possible CSRF attack',
+        );
+      }
+
       return CallbackSuccess(code: params['code']!);
     }
 
