@@ -32,6 +32,8 @@ class KeycastRpc implements NostrSigner {
 
   Future<T> _call<T>(String method, List<dynamic> params,
       T Function(dynamic) fromResult) async {
+    print('[Keycast RPC] Calling $method...');
+    final stopwatch = Stopwatch()..start();
     final response = await _client.post(
       Uri.parse(nostrApi),
       headers: {
@@ -44,7 +46,11 @@ class KeycastRpc implements NostrSigner {
       }),
     );
 
+    stopwatch.stop();
+    print('[Keycast RPC] $method completed in ${stopwatch.elapsedMilliseconds}ms (HTTP ${response.statusCode})');
+
     if (response.statusCode != 200) {
+      print('[Keycast RPC] Error response: ${response.body}');
       throw RpcException(
         'HTTP ${response.statusCode}: ${response.body}',
         method: method,
