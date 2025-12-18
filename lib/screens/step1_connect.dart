@@ -64,8 +64,8 @@ class _Step1ConnectState extends ConsumerState<Step1Connect> {
 
       debugPrint('[Keycast] OAuth callback received: $result');
 
-      // Parse the callback URL (validates state for CSRF protection)
-      final callbackResult = await oauth.parseCallback(result);
+      // Parse the callback URL - PKCE provides security, no state validation needed
+      final callbackResult = oauth.parseCallback(result);
 
       if (callbackResult is CallbackSuccess) {
         debugPrint('[Keycast] Exchanging code for tokens...');

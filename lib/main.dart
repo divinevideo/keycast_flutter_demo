@@ -63,7 +63,7 @@ class _KeycastDemoAppState extends ConsumerState<KeycastDemoApp> {
     debugPrint('[Keycast] Processing OAuth callback...');
 
     final oauth = ref.read(oauthClientProvider);
-    final result = await oauth.parseCallback(uri.toString());
+    final result = oauth.parseCallback(uri.toString());
 
     if (result is CallbackSuccess) {
       final verifier = ref.read(pendingVerifierProvider);
