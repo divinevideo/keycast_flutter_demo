@@ -1,0 +1,330 @@
+# Keycast OAuth Flow - Flutter Demo App
+#
+# CALLBACK URLs:
+# - Demo app: https://login.divine.video/app/callback (hosted by Keycast for testing)
+# - Divine app: https://app.divine.video/app/callback (production)
+#
+# FOR YOUR OWN APP:
+# You need your own callback URL configured with:
+# - iOS: Associated Domains entitlement + AASA file on your domain
+# - Android: App Links with assetlinks.json containing your package + SHA256 fingerprint
+
+shape: sequence_diagram
+
+# ═══════════════════════════════════════════════════════════════
+# ACTORS
+# ═══════════════════════════════════════════════════════════════
+
+user: User
+app: Flutter App
+oauth: KeycastOAuth\nLibrary
+browser: Browser
+server: Keycast Server\n(login.divine.video)
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 1: Initialize OAuth Flow
+# ═══════════════════════════════════════════════════════════════
+
+user -> app: Tap "Connect with Keycast"
+
+app -> oauth: getAuthorizationUrl(nsec?)
+
+oauth.pkce: |md
+  **PKCE (Proof Key for Code Exchange):**
+  1. Generate random `verifier` (43-128 chars)
+  2. `code_challenge` = Base64URL(SHA256(verifier))
+  3. If BYOK: `byok_pubkey` = derive from nsec
+
+  Only `code_challenge` is sent in URL (hash, not secret!)
+|
+
+oauth -> app: returns (authUrl, verifier)
+
+app.platform: |md
+  **Platform-specific handling:**
+
+  **Android:** Save verifier to `pendingVerifierProvider`
+  then launch with `url_launcher`
+
+  **iOS:** Keep verifier in local scope,
+  use `flutter_web_auth_2`
+|
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 2: Browser Opens Keycast
+# ═══════════════════════════════════════════════════════════════
+
+app -> browser: launchUrl(authUrl)
+
+browser -> server: GET /api/oauth/authorize
+
+server.params: |md
+  **URL Parameters:**
+  - `client_id`: App identifier
+  - `redirect_uri`: Your app's callback URL
+    - Demo: `https://login.divine.video/app/callback`
+    - Divine: `https://app.divine.video/app/callback`
+  - `code_challenge`: SHA256 hash of verifier
+  - `code_challenge_method`: S256
+  - `scope`: policy:social
+  - `byok_pubkey`: (optional) for BYOK flow
+  - `authorization_handle`: (optional) for re-auth
+|
+
+server -> browser: Display login/signup form
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 3: User Authenticates
+# ═══════════════════════════════════════════════════════════════
+
+user -> browser: Enter email + password
+
+browser -> server: POST /api/oauth/login or /register
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 4A: Signup - Email Verification Required
+# ═══════════════════════════════════════════════════════════════
+
+signup: Signup Flow {
+  server -> browser: Show "Check your email" page
+
+  server.device_code: |md
+    **Server creates:**
+    - `device_code` stored in Redis (for polling)
+    - Verification email sent to user
+    - Browser starts polling every 2 seconds
+  |
+
+  browser -> server: Poll: GET /api/oauth/poll?device_code=xxx
+  server -> browser: 202 Accepted (still pending...)
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 4B: Same-Device Verification
+# ═══════════════════════════════════════════════════════════════
+
+same_device: Same-Device Verification {
+  user -> browser: Click email link ON SAME DEVICE
+
+  browser.applink: |md
+    Email app opens verification link.
+    Android/iOS intercepts as **App Link**.
+    Goes directly to app (not browser).
+  |
+
+  browser -> server: GET /verify-email?token=xxx
+  server -> browser: 302 Redirect to callback?code=xxx
+  browser -> app: App Link triggers with code
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 4C: Cross-Device Verification (Polling)
+# ═══════════════════════════════════════════════════════════════
+
+cross_device: Cross-Device Verification {
+  user -> server: Click email link ON DIFFERENT DEVICE
+
+  server.stores: |md
+    Server verifies email, stores auth code in Redis.
+    Original browser keeps polling...
+  |
+
+  browser -> server: Poll: GET /api/oauth/poll?device_code=xxx
+  server -> browser: 200 OK with auth code
+
+  browser.intent: |md
+    **Critical for Android:**
+    JavaScript redirect must use **intent://** URL:
+
+    `intent://login.divine.video/app/callback?code=xxx`
+    `#Intent;scheme=https;package=co.openvine.keycast_flutter_demo;end`
+
+    Regular `window.location.href` to https:// does NOT
+    trigger App Links from within Chrome!
+  |
+
+  browser -> app: Intent URL opens app with code
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 4D: Login (No Verification Needed)
+# ═══════════════════════════════════════════════════════════════
+
+login: Login Flow (Existing User) {
+  server -> browser: Immediate redirect (already verified)
+  browser -> app: App Link with code
+}
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 5: Token Exchange
+# ═══════════════════════════════════════════════════════════════
+
+app.handler: |md
+  **Callback Handler:**
+  - Android: `main.dart` → `_handleDeepLink()`
+    retrieves verifier from `pendingVerifierProvider`
+  - iOS: `flutter_web_auth_2` returns inline
+|
+
+app -> oauth: parseCallback(url) → extract code
+
+oauth -> app: CallbackSuccess with code
+
+app -> oauth: exchangeCode(code, verifier)
+
+oauth -> server: POST /api/oauth/token
+
+server.exchange: |md
+  **Token Request Body:**
+  - `grant_type`: authorization_code
+  - `code`: The auth code from callback
+  - `code_verifier`: The original PKCE verifier
+  - `client_id`: App identifier
+  - `redirect_uri`: Must match original
+
+  **Server validates:**
+  SHA256(code_verifier) === stored code_challenge
+|
+
+server -> oauth: Token Response
+
+server.response: |md
+  **Token Response:**
+  - `access_token`: Bearer token for RPC API
+  - `expires_in`: Token lifetime (seconds)
+  - `bunker_url`: For NIP-46 signing mode
+  - `user_pubkey`: User's Nostr public key
+  - `authorization_handle`: For silent re-auth
+|
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 6: Session Created
+# ═══════════════════════════════════════════════════════════════
+
+oauth -> oauth: Create KeycastSession, save to secure storage
+
+oauth -> app: Return TokenResponse
+
+app -> app: Update sessionProvider
+
+app.cleanup: |md
+  **Cleanup:**
+  - Clear `pendingVerifierProvider`
+  - Session persisted via `flutter_secure_storage`
+  - `authorization_handle` saved for future re-auth
+|
+
+app -> user: "Connected successfully!"
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 7: Using KeycastRpc
+# ═══════════════════════════════════════════════════════════════
+
+usage: Post-Authentication Usage {
+  app -> server: KeycastRpc.getPublicKey()
+  server -> app: User's Nostr pubkey
+
+  app.rpc: |md
+    **Signing Options:**
+
+    **1. RPC (default)**
+    Call Keycast server with Bearer token.
+    Methods: getPublicKey, signEvent,
+    nip44Encrypt/Decrypt, nip04Encrypt/Decrypt
+
+    **2. NIP-46 Bunker**
+    Use `bunker_url` from token response
+    for remote signing over Nostr relays.
+
+    **3. Local Signing (BYOK optimization)**
+    If you provided an nsec during OAuth
+    and the server's pubkey matches it,
+    sign locally — faster, no server load.
+  |
+
+  app.signer: |md
+    **Suggested: KeycastSigner**
+
+    Single `NostrSigner` implementation that
+    handles everything internally:
+
+    ```
+    class KeycastSigner implements NostrSigner {
+      KeycastSigner.fromSession(session, localNsec?);
+
+      // Uses local nsec if available and matches,
+      // otherwise delegates to RPC automatically
+      signEvent(event) → SignedEvent
+      nip44Encrypt(pubkey, plaintext) → String
+      // ... etc
+    }
+    ```
+
+    Client code just uses the signer.
+    Implementation details stay hidden.
+  |
+}
+
+# ═══════════════════════════════════════════════════════════════
+# LOCAL KEY MANAGEMENT
+# ═══════════════════════════════════════════════════════════════
+
+app.byok_match: |md
+  **When Local nsec Matches Server Pubkey**
+
+  The user did BYOK and Keycast confirmed
+  the same key. The app can now:
+
+  • Sign and encrypt locally (no RPC needed)
+  • Mark the nsec as "backed up by Keycast"
+
+  "Backed up" means the user has an email
+  and password in Keycast protecting this key.
+  It's safe to delete locally if the user
+  later switches to a different identity.
+|
+
+app.byok_mismatch: |md
+  **When Local nsec Does NOT Match**
+
+  This happens when the user already had
+  a local nsec, then connected to Keycast
+  with a different identity.
+
+  **Critical: Do not delete the local nsec.**
+
+  That key may be the only copy in existence.
+  The user may have published Nostr content
+  with it. Deleting it would be catastrophic.
+
+  The app must use RPC or bunker for the
+  Keycast identity while preserving the
+  old local key separately.
+|
+
+app.safe_delete: |md
+  **When Is It Safe to Delete a Local nsec?**
+
+  Only delete if at least one is true:
+
+  1. It's marked "backed up" — user has
+     email/password recovery via Keycast
+
+  2. It was never used to create content —
+     no posts, no encrypted DMs, nothing
+     that would become inaccessible
+|
+
+app.open_questions: |md
+  **Open UX Questions**
+
+  • If identities mismatch, should the app
+    show both to the user, or silently
+    preserve the old one in background?
+
+  • Should the user explicitly confirm
+    before we overwrite a non-backed-up key?
+
+  • How do we clearly communicate that
+    a key is "backed up" vs "local only"?
+|

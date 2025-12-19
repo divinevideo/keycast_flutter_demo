@@ -1,9 +1,12 @@
 // ABOUTME: OAuth connect screen with both server-generated and BYOK flows
-// ABOUTME: Uses ASWebAuthenticationSession via flutter_web_auth_2 with Universal Links (iOS 17.4+)
+// ABOUTME: Uses ASWebAuthenticationSession on iOS, url_launcher + app_links on Android
+
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:keycast_flutter/keycast_flutter.dart';
 
 import '../theme/app_theme.dart';
@@ -47,47 +50,68 @@ class _Step1ConnectState extends ConsumerState<Step1Connect> {
     });
 
     try {
-      debugPrint('[Keycast] Starting OAuth flow with ASWebAuthenticationSession');
       debugPrint('[Keycast] Auth URL: $url');
 
-      // Use ASWebAuthenticationSession via flutter_web_auth_2 with Universal Links
-      // iOS 17.4+ supports https callbacks via ASWebAuthenticationSession.Callback.https
-      // This provides DNS-verified app identity - more secure than custom URL schemes
-      final result = await FlutterWebAuth2.authenticate(
-        url: url,
-        callbackUrlScheme: 'https',
-        options: const FlutterWebAuth2Options(
-          httpsHost: 'login.divine.video',
-          httpsPath: '/app/callback',
-        ),
-      );
+      if (Platform.isAndroid) {
+        // Android: Use url_launcher + app_links
+        // The browser opens externally, App Links bring the user back
+        // main.dart's _handleDeepLink completes the token exchange
+        debugPrint('[Keycast] Android: Using url_launcher + app_links');
 
-      debugPrint('[Keycast] OAuth callback received: $result');
+        // Store verifier for the app_links callback handler
+        ref.read(pendingVerifierProvider.notifier).set(verifier);
 
-      // Parse the callback URL - PKCE provides security, no state validation needed
-      final callbackResult = oauth.parseCallback(result);
-
-      if (callbackResult is CallbackSuccess) {
-        debugPrint('[Keycast] Exchanging code for tokens...');
-        final tokenResponse = await oauth.exchangeCode(
-          code: callbackResult.code,
-          verifier: verifier,
-        );
-        debugPrint('[Keycast] Token exchange successful');
-
-        final session = KeycastSession.fromTokenResponse(tokenResponse);
-        await ref.read(sessionProvider.notifier).setSession(session);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Connected successfully!'),
-              backgroundColor: AppTheme.successGreen,
-            ),
-          );
+        final uri = Uri.parse(url);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          // Don't set loading to false - user will return via deep link
+          // The app_links handler in main.dart will complete the flow
+          return;
+        } else {
+          throw Exception('Could not launch URL');
         }
-      } else if (callbackResult is CallbackError) {
-        throw Exception('OAuth error: ${callbackResult.error}');
+      } else {
+        // iOS: Use ASWebAuthenticationSession via flutter_web_auth_2
+        // iOS 17.4+ supports https callbacks via ASWebAuthenticationSession.Callback.https
+        // This provides DNS-verified app identity - more secure than custom URL schemes
+        debugPrint('[Keycast] iOS: Using ASWebAuthenticationSession');
+
+        final result = await FlutterWebAuth2.authenticate(
+          url: url,
+          callbackUrlScheme: 'https',
+          options: const FlutterWebAuth2Options(
+            httpsHost: 'login.divine.video',
+            httpsPath: '/app/callback',
+          ),
+        );
+
+        debugPrint('[Keycast] OAuth callback received: $result');
+
+        // Parse the callback URL - PKCE provides security, no state validation needed
+        final callbackResult = oauth.parseCallback(result);
+
+        if (callbackResult is CallbackSuccess) {
+          debugPrint('[Keycast] Exchanging code for tokens...');
+          final tokenResponse = await oauth.exchangeCode(
+            code: callbackResult.code,
+            verifier: verifier,
+          );
+          debugPrint('[Keycast] Token exchange successful');
+
+          final session = KeycastSession.fromTokenResponse(tokenResponse);
+          await ref.read(sessionProvider.notifier).setSession(session);
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Connected successfully!'),
+                backgroundColor: AppTheme.successGreen,
+              ),
+            );
+          }
+        } else if (callbackResult is CallbackError) {
+          throw Exception('OAuth error: ${callbackResult.error}');
+        }
       }
     } catch (e, stackTrace) {
       debugPrint('[Keycast] OAuth flow failed: $e');

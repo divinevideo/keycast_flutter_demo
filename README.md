@@ -385,11 +385,40 @@ class KeycastSession {
 
 ## Server Configuration
 
-The Keycast server at `login.divine.video` is already configured with:
+The Keycast server at `login.divine.video` must be configured for both iOS and Android deep links. Server-side configuration is managed in the `../nos/keycast` repository.
+
+### iOS (Universal Links)
 
 - **AASA file:** `https://login.divine.video/.well-known/apple-app-site-association`
 - **App IDs:** `GZCZBKH7MY.co.openvine.keycastFlutterDemo`, `GZCZBKH7MY.co.openvine.divine`
 - **Callback path:** `/app/callback`
+
+### Android (App Links)
+
+- **Asset Links file:** `https://login.divine.video/.well-known/assetlinks.json`
+- **Package names:** `co.openvine.keycast_flutter_demo`, `co.openvine.divine`
+
+To add a new Android app, update `assetlinks.json` with the package name and SHA256 signing certificate fingerprint:
+
+```json
+{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "your.package.name",
+    "sha256_cert_fingerprints": ["AA:BB:CC:..."]
+  }
+}
+```
+
+Get the SHA256 fingerprint from your signing keystore:
+```bash
+# Debug keystore
+keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA256
+
+# Release keystore
+keytool -list -v -keystore your-release.keystore -alias your-alias | grep SHA256
+```
 
 ---
 

@@ -44,11 +44,10 @@ class _KeycastDemoAppState extends ConsumerState<KeycastDemoApp> {
   Future<void> _handleDeepLink(Uri uri) async {
     debugPrint('[Keycast] Received deep link: $uri');
 
-    // Handle Universal Links callback
-    // Universal Link: https://login.divine.video/app/callback?code=...
-    // Note: With flutter_web_auth_2 and iOS 17.4+, the callback is handled
-    // automatically by ASWebAuthenticationSession. This handler is a fallback
-    // for cases where the app is opened via deep link (e.g., from browser redirect)
+    // Handle App Links / Universal Links callback
+    // URL: https://login.divine.video/app/callback?code=...
+    // - Android: This is the primary handler (url_launcher + app_links)
+    // - iOS: flutter_web_auth_2 handles it inline; this is a fallback
     final isUniversalLink = uri.scheme == 'https' &&
         uri.host == 'login.divine.video' &&
         uri.path.startsWith('/app/callback');
