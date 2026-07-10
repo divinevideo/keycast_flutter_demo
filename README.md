@@ -490,3 +490,7 @@ redirectUri: 'https://login.divine.video/app/callback/' // Wrong (trailing slash
 ## License
 
 MIT
+
+---
+
+Part of [Divine](https://divine.video) — your playground for human creativity · [Brand guidelines](https://github.com/divinevideo/brand-guidelines)
