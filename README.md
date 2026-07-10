@@ -1,199 +1,209 @@
 # Keycast Flutter Demo
 
-A reference implementation demonstrating how to integrate [Keycast](https://login.divine.video) authentication into a Flutter app. This project contains both a reusable library (`keycast_flutter`) and a working demo app.
+A reference implementation showing how to add [Keycast](https://login.divine.video) authentication to a Flutter app. The repository is a pub workspace containing a reusable library, `keycast_flutter`, and a working demo app that exercises it. Keycast is a Nostr signing service: it holds the private key and signs events on the user's behalf over an authenticated API, so the app never has to handle raw keys. The demo covers the full flow — OAuth 2.0 with PKCE, optional BYOK (bring your own key), and remote signing/encryption — and doubles as working documentation for integrating Keycast elsewhere.
 
-**Purpose:** Working code as documentation for integrating Keycast into `divine-mobile`.
-
-## Signing Modes
-
-After authentication, `KeycastSession` provides two ways to sign Nostr events:
-
-### 1. RPC Mode (Recommended)
-
-Direct HTTPS calls to Keycast's RPC API. This demo uses RPC for better latency and scalability.
-
-```dart
-final rpc = KeycastRpc.fromSession(config, session);
-final signedEvent = await rpc.signEvent(event);
-```
-
-### 2. NIP-46 Bunker Mode
-
-The session also provides a `bunkerUrl` for NIP-46 remote signing over Nostr relays. Use this if you already have a NIP-46 client implementation (like NDK or a custom `NostrRemoteSigner`).
-
-```dart
-final bunkerUrl = session.bunkerUrl;
-// bunker://<pubkey>?relay=wss://...&secret=...
-
-// Use with your NIP-46 client:
-final signer = NostrRemoteSigner.fromBunkerUrl(bunkerUrl);
-```
-
-Both modes support the same operations: `sign_event`, `get_public_key`, `nip44_encrypt`, `nip44_decrypt`, `nip04_encrypt`, `nip04_decrypt`.
-
-## Quick Start
-
-```bash
-# Run on iOS simulator (recommended - OAuth works correctly)
-flutter run -d "iPhone 15 Pro"
-
-# Run on macOS (OAuth has known issues - see Troubleshooting)
-flutter run -d macos
-```
-
-## Project Structure
+## What's in the box
 
 ```
 keycast_flutter_demo/
 ├── packages/
-│   ├── keycast_flutter/     # The library - copy this to divine-mobile
-│   └── nostr_sdk/           # Minimal nostr_sdk (vendored from divine-mobile)
-├── lib/                     # Demo app showing integration patterns
-│   ├── main.dart            # Deep link handling setup
-│   ├── providers/           # Riverpod state management
-│   └── screens/             # 3-step demo UI
-└── ios/Runner/
-    └── Runner.entitlements  # Universal Links config
+│   ├── keycast_flutter/     # The library you integrate
+│   └── nostr_sdk/           # Vendored nostr_sdk (Nip19, Event, NostrSigner, ...)
+├── lib/                     # Demo app
+│   ├── main.dart            # Deep-link handling for the OAuth callback
+│   ├── providers/           # Riverpod state (config, session, signer, signing mode)
+│   ├── screens/             # 3-step demo UI: connect, sign, encrypt
+│   ├── widgets/             # Info cards and result display
+│   └── theme/               # App theme
+├── docs/keycast-oauth-flow.d2   # OAuth flow diagram (+ .png)
+├── ios/  android/  macos/  linux/   # Platform runners and deep-link config
 ```
 
----
+The demo requires Dart SDK `^3.10.0` and uses [pub workspaces](https://dart.dev/tools/pub/workspaces): the root `pubspec.yaml` declares the workspace members and the packages resolve locally via `path` dependencies.
 
-## Integration Guide for divine-mobile
+## Install / add the library
 
-### Step 1: Copy the Library
+`keycast_flutter` is not published to pub.dev (`publish_to: 'none'`). Integrate it by copying `packages/keycast_flutter/` (and its `packages/nostr_sdk/` dependency) into your app and referencing them as path dependencies:
 
-Copy `packages/keycast_flutter/` into `divine-mobile/mobile/packages/`.
-
-Update `divine-mobile/mobile/pubspec.yaml`:
 ```yaml
 dependencies:
   keycast_flutter:
     path: packages/keycast_flutter
+  nostr_sdk:
+    path: packages/nostr_sdk
 ```
 
-### Step 2: Configure OAuth
-
-Create a provider for OAuth configuration:
+Then import the public API:
 
 ```dart
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:keycast_flutter/keycast_flutter.dart';
+```
 
-final oauthConfigProvider = Provider<OAuthConfig>((ref) {
-  return const OAuthConfig(
-    serverUrl: 'https://login.divine.video',
-    clientId: 'divine-mobile',
-    redirectUri: 'https://login.divine.video/app/callback',
+The library depends on `http`, `crypto`, `flutter_secure_storage`, and the vendored `nostr_sdk`. The demo app additionally uses `flutter_riverpod`, `app_links`, `url_launcher`, and `flutter_web_auth_2` to drive the OAuth UI.
+
+## Usage
+
+### 1. Configure OAuth
+
+```dart
+const config = OAuthConfig(
+  serverUrl: 'https://login.divine.video',
+  clientId: 'divine-flutter-demo',
+  redirectUri: 'https://login.divine.video/app/callback',
+  // defaultScopes defaults to const ['policy:social']
+);
+
+final oauth = KeycastOAuth(
+  config: config,
+  storage: SecureKeycastStorage(), // optional; defaults to MemoryKeycastStorage
+);
+```
+
+`OAuthConfig` derives the server endpoints it needs: `authorizeUrl` (`/api/oauth/authorize`), `tokenUrl` (`/api/oauth/token`), and `nostrApiUrl` (`/api/nostr`).
+
+### 2. Start the OAuth + PKCE flow
+
+`getAuthorizationUrl` is asynchronous and returns a `(String url, String verifier)` record. It generates the PKCE verifier/challenge for you; keep the returned `verifier` around — you need it to exchange the code. If a stored authorization handle exists it is reused automatically for silent re-auth.
+
+```dart
+// Server-generated key: Keycast creates a new Nostr identity.
+final (url, verifier) = await oauth.getAuthorizationUrl(
+  scope: 'policy:social',
+  defaultRegister: true,
+);
+
+// Open `url` in a browser / auth session, then hold onto `verifier`.
+```
+
+**BYOK — bring your own key.** Pass an existing `nsec`. The library derives the `byok_pubkey` and embeds the secret in the PKCE `code_verifier`, so it never travels as a plain query parameter. If the `nsec` is malformed, `getAuthorizationUrl` returns an empty `url`:
+
+```dart
+final (url, verifier) = await oauth.getAuthorizationUrl(
+  nsec: nsec, // e.g. "nsec1..."
+  scope: 'policy:social',
+);
+if (url.isEmpty) {
+  // Invalid nsec format — surface an error to the user.
+}
+```
+
+How you open `url` and receive the callback is platform-specific. The demo uses `flutter_web_auth_2` (`ASWebAuthenticationSession`) on iOS with an HTTPS callback, and `url_launcher` + `app_links` on Android, where the App Link brings the user back into `main.dart`'s deep-link handler.
+
+### 3. Handle the callback and exchange the code
+
+`parseCallback` returns a sealed `CallbackResult` — either `CallbackSuccess(code)` or `CallbackError(error, description)`. On success, exchange the code together with the stored verifier. `exchangeCode` persists the session (and any authorization handle) to the configured storage automatically before returning the `TokenResponse`.
+
+```dart
+final result = oauth.parseCallback(callbackUrl);
+
+if (result is CallbackSuccess) {
+  final tokenResponse = await oauth.exchangeCode(
+    code: result.code,
+    verifier: verifier,
   );
-});
-
-final oauthClientProvider = Provider<KeycastOAuth>((ref) {
-  final config = ref.watch(oauthConfigProvider);
-  return KeycastOAuth(config: config);
-});
+  final session = KeycastSession.fromTokenResponse(tokenResponse);
+  // Use / persist `session` (see below).
+} else if (result is CallbackError) {
+  // result.error, result.description
+}
 ```
 
-### Step 3: Handle Deep Links (Universal Links)
+### 4. Sign and encrypt
 
-In your app's main widget, set up deep link handling:
+`KeycastRpc` implements `nostr_sdk`'s `NostrSigner`, so it is a drop-in signer. Build it from a session that still has RPC access:
 
 ```dart
-import 'package:app_links/app_links.dart';
-import 'package:keycast_flutter/keycast_flutter.dart';
-
-class MyApp extends ConsumerStatefulWidget {
-  // ...
+final session = await KeycastSession.load();
+if (session == null || !session.hasRpcAccess) {
+  throw SessionExpiredException();
 }
 
-class _MyAppState extends ConsumerState<MyApp> {
-  final _appLinks = AppLinks();
+final rpc = KeycastRpc.fromSession(config, session);
 
-  @override
-  void initState() {
-    super.initState();
-    _initDeepLinks();
-  }
+final pubkey = await rpc.getPublicKey();
 
-  Future<void> _initDeepLinks() async {
-    // Handle app launch from Universal Link
-    final initialLink = await _appLinks.getInitialLink();
-    if (initialLink != null) {
-      _handleOAuthCallback(initialLink);
-    }
+final event = Event(
+  pubkey!,   // pubkey
+  1,         // kind
+  [],        // tags
+  'Hello from Keycast!', // content
+  createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+);
+final signed = await rpc.signEvent(event);
 
-    // Handle Universal Links while app is running
-    _appLinks.uriLinkStream.listen(_handleOAuthCallback);
-  }
+final ciphertext = await rpc.nip44Encrypt(recipientPubkey, 'secret message');
+final plaintext = await rpc.nip44Decrypt(senderPubkey, ciphertext);
+// nip04 equivalents: rpc.encrypt(...) / rpc.decrypt(...)
+```
 
-  Future<void> _handleOAuthCallback(Uri uri) async {
-    // Only handle our OAuth callback URL
-    if (uri.scheme != 'https' ||
-        uri.host != 'login.divine.video' ||
-        !uri.path.startsWith('/app/callback')) {
-      return;
-    }
+### 5. Persist the session
 
-    final oauth = ref.read(oauthClientProvider);
-    final result = oauth.parseCallback(uri.toString());
+`KeycastSession` serializes to `flutter_secure_storage`. `hasRpcAccess` is true when the session has an access token and has not expired.
 
-    if (result is CallbackSuccess) {
-      final verifier = ref.read(pendingVerifierProvider);
-      if (verifier == null) return;
-
-      try {
-        final tokenResponse = await oauth.exchangeCode(
-          code: result.code,
-          verifier: verifier,
-        );
-
-        final session = KeycastSession.fromTokenResponse(tokenResponse);
-        await session.save();
-
-        // Update your app state here
-      } catch (e) {
-        // Handle error
-      }
-    }
-  }
+```dart
+await session.save();                          // store after a successful exchange
+final restored = await KeycastSession.load();  // on app start
+if (restored != null && restored.isExpired) {
+  await KeycastSession.clear();
 }
 ```
 
-### Step 4: iOS Configuration (Universal Links)
+To log the user out, call `oauth.logout()` — it clears the stored session and authorization handle and posts to the server's `/api/auth/logout`.
 
-Add to `ios/Runner/Runner.entitlements`:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.developer.associated-domains</key>
-    <array>
-        <string>applinks:login.divine.video</string>
-    </array>
-</dict>
-</plist>
+## Signing modes
+
+After authentication, a session gives you two ways to sign Nostr events. The demo exposes a toggle between them.
+
+**RPC mode (default).** Direct authenticated HTTPS calls to Keycast's `/api/nostr` endpoint via `KeycastRpc`. This is what the demo signs with — lower latency and no relay round-trips.
+
+**NIP-46 bunker mode.** Every session also carries a `bunkerUrl` (`bunker://<pubkey>?relay=wss://...&secret=...`) for NIP-46 remote signing over Nostr relays. Feed it to a NIP-46 client (for example `nostr_sdk`'s `NostrRemoteSigner`) if you already have one. The demo surfaces the bunker URL but performs its actual signing over RPC.
+
+Both transports support the same operations: `sign_event`, `get_public_key`, `nip44_encrypt`, `nip44_decrypt`, `nip04_encrypt`, `nip04_decrypt`.
+
+## Running the demo app
+
+```bash
+flutter pub get
+
+# iOS simulator or device — OAuth callbacks work correctly here.
+flutter run -d "iPhone 15 Pro"
+
+# macOS — builds and runs, but the HTTPS OAuth callback is unreliable (see Troubleshooting).
+flutter run -d macos
 ```
 
-Add `CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;` to your Xcode project's build settings (Debug, Release, and Profile configurations).
+The demo's OAuth configuration (`clientId: divine-flutter-demo`, callback `https://login.divine.video/app/callback`) is registered against the Keycast server's deep-link configuration. Building with a different Apple Developer Team ID or Android signing key will break the Universal Link / App Link verification until the server is updated to include your app identifiers.
 
-### Step 5: macOS Configuration (Universal Links)
+The UI walks through three steps: **Connect** (server-generated key or BYOK), **Sign** an event, and **Encrypt/decrypt** a message.
 
-> **Warning:** macOS HTTPS callbacks with ASWebAuthenticationSession do not work reliably due to Apple platform differences. The completion handler often doesn't fire on macOS, even though the same API works on iOS. See [Troubleshooting](#user-canceled-login--oauth-immediately-fails) for details.
+## Configuration
 
-macOS requires Associated Domains for HTTPS callbacks. Add to both `macos/Runner/DebugProfile.entitlements` and `macos/Runner/Release.entitlements`:
+The Keycast server at `login.divine.video` must recognize each app for iOS Universal Links and Android App Links. Server-side deep-link configuration lives in the Keycast server repository.
+
+### iOS (Universal Links)
+
+- AASA file: `https://login.divine.video/.well-known/apple-app-site-association`
+- App IDs: `GZCZBKH7MY.co.openvine.keycastFlutterDemo`, `GZCZBKH7MY.co.openvine.divine`
+- Callback path: `/app/callback`
+
+Add the associated domain to `ios/Runner/Runner.entitlements`:
+
 ```xml
 <key>com.apple.developer.associated-domains</key>
 <array>
     <string>applinks:login.divine.video</string>
-    <string>webcredentials:login.divine.video</string>
 </array>
 ```
 
-**Note:** macOS Universal Links require macOS 14.4+ and the same AASA file configuration as iOS. The app must be signed with an Apple Developer certificate that matches the AASA file's app IDs.
+macOS uses the same AASA configuration and requires macOS 14.4+ with a matching Apple Developer signing certificate.
 
-### Step 6: Android Configuration (App Links)
+### Android (App Links)
 
-Add to `android/app/src/main/AndroidManifest.xml` inside `<activity>`:
+- Asset Links file: `https://login.divine.video/.well-known/assetlinks.json`
+- Package names: `co.openvine.keycast_flutter_demo`, `co.openvine.divine`
+
+Declare the callback intent filter inside your `<activity>` in `android/app/src/main/AndroidManifest.xml`:
+
 ```xml
 <intent-filter android:autoVerify="true">
     <action android:name="android.intent.action.VIEW"/>
@@ -203,152 +213,45 @@ Add to `android/app/src/main/AndroidManifest.xml` inside `<activity>`:
 </intent-filter>
 ```
 
----
+To register a new Android app, add its package name and SHA256 signing fingerprint to `assetlinks.json`:
 
-## Usage Examples
-
-### Starting OAuth Flow (Server-Generated Key)
-
-```dart
-// User wants a NEW Nostr identity created by Keycast
-void connectWithKeycast() async {
-  final oauth = ref.read(oauthClientProvider);
-
-  final (url, verifier) = oauth.getAuthorizationUrl(
-    scope: 'policy:social',
-    defaultRegister: true,
-  );
-
-  // Store verifier for token exchange later
-  ref.read(pendingVerifierProvider.notifier).set(verifier);
-
-  // Open OAuth page in browser
-  await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-}
+```bash
+# Debug keystore
+keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA256
 ```
 
-### Starting OAuth Flow (BYOK - Bring Your Own Key)
-
-```dart
-// User wants to use their EXISTING Nostr identity
-void connectWithBYOK(String nsec) async {
-  final oauth = ref.read(oauthClientProvider);
-
-  // Pass nsec - the library derives byok_pubkey internally
-  final (url, verifier) = oauth.getAuthorizationUrl(
-    nsec: nsec,  // e.g., "nsec1..."
-    scope: 'policy:social',
-    defaultRegister: true,
-  );
-
-  ref.read(pendingVerifierProvider.notifier).set(verifier);
-  await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-}
-```
-
-### Using the RPC Client (NostrSigner)
-
-`KeycastRpc` implements the `NostrSigner` interface, making it a drop-in replacement:
-
-```dart
-// Create RPC client from session
-final session = await KeycastSession.load();
-if (session == null || !session.hasRpcAccess) {
-  throw Exception('Not authenticated');
-}
-
-final config = ref.read(oauthConfigProvider);
-final rpc = KeycastRpc.fromSession(config, session);
-
-// Get public key
-final pubkey = await rpc.getPublicKey();
-
-// Sign an event
-final event = Event(
-  kind: 1,
-  content: 'Hello from divine-mobile!',
-  tags: [],
-  createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-  pubkey: pubkey!,
-);
-final signedEvent = await rpc.signEvent(event);
-
-// Encrypt (NIP-44)
-final ciphertext = await rpc.nip44Encrypt(recipientPubkey, 'secret message');
-
-// Decrypt (NIP-44)
-final plaintext = await rpc.nip44Decrypt(senderPubkey, ciphertext);
-```
-
-### Session Persistence
-
-Sessions are automatically persisted using `flutter_secure_storage`:
-
-```dart
-// Save after successful OAuth
-final session = KeycastSession.fromTokenResponse(tokenResponse);
-await session.save();
-
-// Load on app start
-final session = await KeycastSession.load();
-if (session != null && session.hasRpcAccess) {
-  // User is authenticated
-}
-
-// Clear on logout
-await KeycastSession.clear();
-```
-
-### Checking Token Expiry
-
-```dart
-final session = await KeycastSession.load();
-
-if (session == null) {
-  // Not logged in
-} else if (session.isExpired) {
-  // Token expired - need to re-authenticate
-  await KeycastSession.clear();
-} else if (session.hasRpcAccess) {
-  // Ready to use RPC
-}
-```
-
----
-
-## API Reference
-
-### KeycastOAuth
+## API reference
 
 ```dart
 class KeycastOAuth {
-  KeycastOAuth({required OAuthConfig config, http.Client? httpClient});
-
-  /// Generate authorization URL
-  /// Returns (url, verifier) - store verifier for token exchange
-  (String url, String verifier) getAuthorizationUrl({
-    String? nsec,           // Optional: enables BYOK flow
-    String scope,           // Default: 'policy:social'
-    bool defaultRegister,   // Default: true
+  KeycastOAuth({
+    required OAuthConfig config,
+    http.Client? httpClient,
+    KeycastStorage? storage,        // defaults to MemoryKeycastStorage
   });
 
-  /// Exchange authorization code for tokens
-  Future<TokenResponse> exchangeCode({
+  Future<KeycastSession?> getSession();          // null if missing or expired
+  Future<String?> getAuthorizationHandle();
+  Future<void> logout();                          // clears storage + server logout
+
+  /// Returns (url, verifier). Reuses a stored handle for silent re-auth.
+  Future<(String url, String verifier)> getAuthorizationUrl({
+    String? nsec,                   // set to enable BYOK
+    String scope = 'policy:social',
+    bool defaultRegister = true,
+    String? authorizationHandle,
+  });
+
+  CallbackResult parseCallback(String url);        // CallbackSuccess | CallbackError
+  Future<TokenResponse> exchangeCode({             // auto-saves the session
     required String code,
     required String verifier,
   });
-
-  /// Parse callback URL
-  CallbackResult parseCallback(String url);
+  void close();
 }
-```
 
-### KeycastRpc (implements NostrSigner)
-
-```dart
 class KeycastRpc implements NostrSigner {
-  KeycastRpc({required String nostrApi, required String accessToken});
-
+  KeycastRpc({required String nostrApi, required String accessToken, http.Client? httpClient});
   factory KeycastRpc.fromSession(OAuthConfig config, KeycastSession session);
 
   Future<String?> getPublicKey();
@@ -358,134 +261,59 @@ class KeycastRpc implements NostrSigner {
   Future<String?> encrypt(String pubkey, String plaintext);   // NIP-04
   Future<String?> decrypt(String pubkey, String ciphertext);  // NIP-04
 }
-```
 
-### KeycastSession
-
-```dart
 class KeycastSession {
   final String bunkerUrl;
   final String? accessToken;
   final DateTime? expiresAt;
   final String? scope;
   final String? userPubkey;
+  final String? authorizationHandle;
 
   bool get isExpired;
   bool get hasRpcAccess;
 
   factory KeycastSession.fromTokenResponse(TokenResponse response);
+  KeycastSession copyWith({...});
 
-  Future<void> save();
-  static Future<KeycastSession?> load();
-  static Future<void> clear();
+  Future<void> save([FlutterSecureStorage? storage]);
+  static Future<KeycastSession?> load([FlutterSecureStorage? storage]);
+  static Future<void> clear([FlutterSecureStorage? storage]);
 }
 ```
 
----
-
-## Server Configuration
-
-The Keycast server at `login.divine.video` must be configured for both iOS and Android deep links. Server-side configuration is managed in the `../nos/keycast` repository.
-
-### iOS (Universal Links)
-
-- **AASA file:** `https://login.divine.video/.well-known/apple-app-site-association`
-- **App IDs:** `GZCZBKH7MY.co.openvine.keycastFlutterDemo`, `GZCZBKH7MY.co.openvine.divine`
-- **Callback path:** `/app/callback`
-
-### Android (App Links)
-
-- **Asset Links file:** `https://login.divine.video/.well-known/assetlinks.json`
-- **Package names:** `co.openvine.keycast_flutter_demo`, `co.openvine.divine`
-
-To add a new Android app, update `assetlinks.json` with the package name and SHA256 signing certificate fingerprint:
-
-```json
-{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "your.package.name",
-    "sha256_cert_fingerprints": ["AA:BB:CC:..."]
-  }
-}
-```
-
-Get the SHA256 fingerprint from your signing keystore:
-```bash
-# Debug keystore
-keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA256
-
-# Release keystore
-keytool -list -v -keystore your-release.keystore -alias your-alias | grep SHA256
-```
-
----
+`KeyUtils` provides key helpers (`parseNsec`, `derivePublicKey`, `derivePublicKeyFromNsec`, `generatePrivateKey`, `encodeToNsec`, `encodeToPubkey`). Storage is pluggable through the `KeycastStorage` interface, with `SecureKeycastStorage` (backed by `flutter_secure_storage`) and `MemoryKeycastStorage` implementations. Typed errors are `SessionExpiredException`, `OAuthException`, `RpcException`, and `InvalidKeyException`, all extending `KeycastException`.
 
 ## Testing
 
-The library includes comprehensive tests:
+The library ships with unit tests that mock all HTTP with `mocktail`, so no network is required:
 
 ```bash
 cd packages/keycast_flutter
 flutter test
 ```
 
-| Test File | Coverage |
+| Test file | Coverage |
 |-----------|----------|
-| `pkce_test.dart` | PKCE verifier/challenge, BYOK embedding |
+| `pkce_test.dart` | PKCE verifier/challenge generation, BYOK embedding |
 | `oauth_client_test.dart` | URL building, token exchange, callback parsing |
-| `rpc_client_test.dart` | All RPC methods, error handling |
+| `rpc_client_test.dart` | RPC methods and error handling |
 | `session_test.dart` | Persistence, expiry, factory methods |
 | `key_utils_test.dart` | nsec parsing, pubkey derivation |
-
-All HTTP calls are mocked using `mocktail` - no network required.
-
----
+| `exceptions_test.dart` | Typed exception behavior |
 
 ## Troubleshooting
 
-### "User canceled login" / OAuth immediately fails
+**"User canceled login" / OAuth fails immediately.** `ASWebAuthenticationSession` can't match the callback URL.
 
-This error occurs when ASWebAuthenticationSession can't match the callback URL. Common causes:
+- Universal Links require Apple Developer Team membership. The AASA file at `login.divine.video` is configured for Team ID `GZCZBKH7MY`; building with a different Team ID breaks the match.
+- macOS HTTPS callbacks are unreliable. On iOS 17.4+ the completion handler fires correctly; on macOS 14.4+ it often does not, and the redirect is routed to the Universal Links handler instead. This is [known Apple platform behavior](https://stackoverflow.com/questions/61748589/does-aswebauthenticationsession-support-universal-links). Use iOS for testing, or contact the Keycast maintainers to have your app's bundle ID added to the AASA.
 
-**1. Universal Links require Apple Developer Team membership.** The demo's AASA file at `login.divine.video` is configured for our Team ID (`GZCZBKH7MY`). If you build with a different Team ID, Universal Links won't work.
+**Universal Links not working in the simulator.** Delete and reinstall the app; iOS caches AASA files, so wait a few minutes after a server deploy; confirm entitlements made it into the build with `codesign -d --entitlements - Runner.app`.
 
-**2. macOS HTTPS callbacks don't work reliably.** Due to Apple platform differences, `ASWebAuthenticationSession.Callback.https` behaves differently on macOS vs iOS:
-- **iOS 17.4+**: HTTPS callbacks work correctly - the completion handler fires
-- **macOS 14.4+**: The completion handler often doesn't fire. The redirect goes to the Universal Links handler instead, causing the "User canceled login" error
+**"Invalid redirect_uri".** `redirectUri` must match the server registration exactly — no trailing slash: `https://login.divine.video/app/callback`.
 
-This is a [known Apple platform behavior](https://stackoverflow.com/questions/61748589/does-aswebauthenticationsession-support-universal-links) that cannot be fixed through configuration. The flutter_web_auth_2 plugin would need platform-specific code to handle this.
-
-**Solutions:**
-
-1. **Use iOS for testing** - iOS (simulator and device) works correctly with HTTPS callbacks
-
-2. **Read the code as reference** - The demo is primarily documentation. Study how OAuth + PKCE + Universal Links work, then implement in your own app
-
-3. **Contact us** - If you're integrating with Keycast and need your app's bundle ID added to the AASA, reach out
-
-### Universal Links not working in simulator
-
-1. Delete and reinstall the app
-2. iOS caches AASA files - wait a few minutes after server deploy
-3. Check entitlements are in the built app: `codesign -d --entitlements - Runner.app`
-
-### "Invalid redirect_uri" error
-
-Ensure `redirectUri` in `OAuthConfig` matches exactly what's registered on the server:
-```dart
-redirectUri: 'https://login.divine.video/app/callback'  // Correct
-redirectUri: 'https://login.divine.video/app/callback/' // Wrong (trailing slash)
-```
-
-### Token exchange fails
-
-- Verify the `verifier` stored matches what was used to generate the URL
-- Check the authorization `code` hasn't expired (typically 10 minutes)
-- Ensure you're not reusing a code (single-use)
-
----
+**Token exchange fails.** Verify the stored `verifier` matches the one used to build the URL, that the authorization `code` hasn't expired (single-use, typically ~10 minutes), and that it isn't being reused.
 
 ## License
 
